@@ -2,10 +2,12 @@
 
 
 void RunBulk(int bulkSize) {
-  ReportWriter writer;
-  ConsoleOutput consoleOutput(&writer);
-  BatchCommandProcessor commandProcessor(bulkSize, &consoleOutput);
+  BatchCommandProcessor commandProcessor(bulkSize);
+
   ConsoleInput consoleInput(&commandProcessor);
+  ReportWriter writer(&commandProcessor);
+  ConsoleOutput consoleOutput(&commandProcessor);
+
   std::string text;
   while (std::getline(std::cin, text)) {
     consoleInput.ProcessCommand(Command{text, std::chrono::system_clock::now()});
