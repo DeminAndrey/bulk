@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.2)
 
-if (DEFINED ENV{TRAVIS_BUILD_NUMBER})
-    project(bulk VERSION 0.0.$ENV{TRAVIS_BUILD_NUMBER})
-else ()
-    project(bulk VERSION 0.0.1)
-endif ()
+set(PATCH_VERSION "1" CACHE INTERNAL "Patch version")
+set(PROJECT_VESRION 0.0.${PATCH_VERSION})
+
+project(bulk VERSION ${PROJECT_VESRION})
+
+configure_file(version.h.in version.h)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/../bin)
 
