@@ -11,6 +11,8 @@
 #include <vector>
 
 static const std::string BULK = "bulk: ";
+static const std::string START_BLOCK = "{";
+static const std::string END_BLOCK = "}";
 
 struct Command {
   std::string text;
@@ -37,61 +39,14 @@ protected:
 };
 
 /**
- * @brief базовый класс обработчика команд
+ * @brief класс обработчика команд
  */
-class CommandProcessor {
+class BatchCommandProcessor { // publisher
 public:
-  CommandProcessor(CommandProcessor* nextCommandProcessor = nullptr)
-    : m_nextCommandProcessor(nextCommandProcessor) {}
+  BatchCommandProcessor(int bulkSize)
+    : m_bulkSize(bulkSize) {}
 
-  virtual ~CommandProcessor() = default;
-
-  virtual void StartBlock() {}
-  virtual void FinishBlock() {}
-
-  virtual void ProcessCommand(const Command& command) = 0;
-
-  virtual void subscribe(Output *) noexcept {}
-  virtual void unSubscribe(Output *) noexcept {}
-  virtual void notify() noexcept {}
-
-protected:
-  CommandProcessor* m_nextCommandProcessor;
-  std::vector<Output*> m_subscribers;
-};
-
-class ConsoleInput : public CommandProcessor {
-public:
-  ConsoleInput(CommandProcessor* nextCommandProcessor = nullptr)
-    : CommandProcessor(nextCommandProcessor)
-    , m_blockDepth(0) {}
-
-  void ProcessCommand(const Command& command) override {
-    if (m_nextCommandProcessor) {
-      if (command.text == "{") {
-        if (m_blockDepth++ == 0)
-          m_nextCommandProcessor->StartBlock();
-      }
-      else if (command.text == "}") {
-        if (--m_blockDepth == 0)
-          m_nextCommandProcessor->FinishBlock();
-      }
-      else
-        m_nextCommandProcessor->ProcessCommand(command);
-    }
-  }
-private:
-  int m_blockDepth;
-};
-
-class BatchCommandProcessor : public CommandProcessor { // publisher
-public:
-  BatchCommandProcessor(int bulkSize, CommandProcessor* nextCommandProcessor = nullptr)
-    : CommandProcessor(nextCommandProcessor)
-    , m_bulkSize(bulkSize)
-    , m_blockForced(false) {}
-
-  ~BatchCommandProcessor() override {
+  ~BatchCommandProcessor() {
     if (!m_blockForced) {
       DumpBatch();
     }
@@ -100,17 +55,17 @@ public:
     }
   }
 
-  void StartBlock() override {
+  void StartBlock() {
     m_blockForced = true;
     DumpBatch();
   }
 
-  void FinishBlock() override {
+  void FinishBlock() {
     m_blockForced = false;
     DumpBatch();
   }
 
-  void ProcessCommand(const Command& command) override {
+  void ProcessCommand(const Command& command) {
     m_commands.push_back(command);
     notify();
 
@@ -120,13 +75,13 @@ public:
     }
   }
 
-  void subscribe(Output *o) noexcept override {
+  void subscribe(Output *o) noexcept {
     if (o) {
       m_subscribers.push_back(o);
     }
   }
 
-  void unSubscribe(Output *o) noexcept override {
+  void unSubscribe(Output *o) noexcept {
     if (o) {
       m_subscribers.erase(
             std::remove(
@@ -134,7 +89,7 @@ public:
     }
   }
 
-  void notify() noexcept override {
+  void notify() noexcept {
     for (auto subscriber : m_subscribers) {
       if (subscriber) {
         subscriber->update(m_commands);
@@ -158,14 +113,20 @@ private:
   }
 
   int m_bulkSize;
-  bool m_blockForced;
+  bool m_blockForced = false;
   std::vector<Command> m_commands;
+  std::vector<Output*> m_subscribers;
 };
 
+/**
+ * @brief класс вывода команд в консоль
+ */
 class ConsoleOutput : public Output { // subscriber
 public:
-  explicit ConsoleOutput(CommandProcessor *processor) {
-    processor->subscribe(this);
+  explicit ConsoleOutput(BatchCommandProcessor *processor) {
+    if (processor) {
+      processor->subscribe(this);
+    }
   }
 
   void update(const std::vector<Command>& commands) override {
@@ -181,10 +142,15 @@ private:
   std::vector<Command> m_commands;
 };
 
+/**
+ * @brief класс записи команд в файл
+ */
 class ReportWriter : public Output { // subscriber
 public:
-  explicit ReportWriter(CommandProcessor *processor) {
-    processor->subscribe(this);
+  explicit ReportWriter(BatchCommandProcessor *processor) {
+    if (processor) {
+      processor->subscribe(this);
+    }
   }
 
   void update(const std::vector<Command>& commands) override {
@@ -211,4 +177,35 @@ private:
 
     return filename.str();
   }
+};
+
+/**
+ * @brief класс работы с командами из консоли
+ */
+class BatchConsoleInput {
+public:
+  BatchConsoleInput(int bulkSize) {
+    m_commandProcessor = std::make_unique<BatchCommandProcessor>(bulkSize);
+    m_output.push_back(std::make_unique<ReportWriter>(m_commandProcessor.get()));
+    m_output.push_back(std::make_unique<ConsoleOutput>(m_commandProcessor.get()));
+  }
+
+  void ProcessCommand(const Command& command) {
+    if (m_commandProcessor) {
+      if (command.text == START_BLOCK) {
+        if (m_blockDepth++ == 0)
+          m_commandProcessor->StartBlock();
+      }
+      else if (command.text == END_BLOCK) {
+        if (--m_blockDepth == 0)
+          m_commandProcessor->FinishBlock();
+      }
+      else
+        m_commandProcessor->ProcessCommand(command);
+    }
+  }
+private:
+  int m_blockDepth = 0;
+  std::unique_ptr<BatchCommandProcessor> m_commandProcessor;
+  std::vector<std::unique_ptr<Output>> m_output;
 };
